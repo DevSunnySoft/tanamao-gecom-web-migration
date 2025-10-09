@@ -1,0 +1,32 @@
+{
+  "name": "tanamao-migration",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "migrate-users": "node dist/index.js migrate-users",
+    "migrate-companies": "node dist/index.js migrate-companies",
+    "migrate-paymethods": "node dist/index.js migrate-paymethods",
+    "migrate-products": "node dist/index.js migrate-products",
+    "dev": "ts-node src/index.ts",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "test-delivery-areas": "ts-node test-delivery-areas.ts",
+    "test-company-migration": "ts-node test-company-migration.ts",
+    "validate-migration": "ts-node validate-migration.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.1",
+    "mongoose": "^8.18.0",
+    "uuid": "^11.1.0"
+  }
+}

@@ -1,0 +1,56 @@
+[{
+  "_id": {
+    "$oid": "5ff79e137469c4258836b362"
+  },
+  "spotcash": true,
+  "description": "Dinheiro (Em espécie)",
+  "onlinecash": false,
+  "isactive": true,
+  "createdat": {
+    "$date": "2021-01-07T23:49:39.697Z"
+  },
+  "version": "1.0",
+  "code": "DIN"
+},
+{
+  "_id": {
+    "$oid": "60647fd05bedd5000a3a2c85"
+  },
+  "spotcash": true,
+  "description": "Cartão de crédito",
+  "onlinecash": false,
+  "isactive": true,
+  "createdat": {
+    "$date": "2021-03-31T13:57:36.823Z"
+  },
+  "version": "1.0",
+  "code": "CDC"
+},
+{
+  "_id": {
+    "$oid": "60647fee5bedd5000a3a2c86"
+  },
+  "spotcash": true,
+  "description": "Cartão de debito",
+  "onlinecash": false,
+  "isactive": true,
+  "createdat": {
+    "$date": "2021-03-31T13:58:06.188Z"
+  },
+  "version": "1.0",
+  "code": "CDD"
+},
+{
+  "_id": {
+    "$oid": "66e9d382099387fb7bdfb643"
+  },
+  "spotcash": true,
+  "description": "Pix",
+  "onlinecash": false,
+  "isactive": true,
+  "createdat": {
+    "$date": "2024-09-17T19:07:46.582Z"
+  },
+  "version": "1.1.0",
+  "code": "PIX"
+}]
