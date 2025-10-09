@@ -215,3 +215,4 @@ src/
 - 🏢 [COMPANY-MIGRATION-GUIDE.md](./COMPANY-MIGRATION-GUIDE.md) - Migração de empresas
 - 🧪 [test-company-migration.ts](./test-company-migration.ts) - Script de validação
 # tanamao-gecom-web-migration
+# tanamao-gecom-web-migration
