@@ -489,28 +489,53 @@ function transformComponentComplementItem(oldComponents: any[], oldCategoryId: s
   }));
 }
 
-function transformProductAdditionalItem(oldAdditionals: any[], companyId: string, oldCategoryId: string): IProductComplement {
+function transformProductAdditionalItem(oldAdditionals: any[], companyId: string, oldCategoryId: string): IProductComplement[] {
   const normalAdditionals = oldAdditionals.filter(a => a.additionaltype === 'N' || a.additionaltype === 'Q');
   const borders = oldAdditionals.filter(a => a.additionaltype === 'B');
 
-  return {
-    pdvId: 'add-' + companyId,
-    name: `Adicionais`,
-    qtdSelection: normalAdditionals.length,
-    isRequired: false,
-    groupId: 'add-' + companyId,
-    items: normalAdditionals.map((item: any, index) => ({
-      pdvId: item._id,
-      product: item.additionalid.product,
-      description: item.additionalid.description,
-      barCode: item.additionalid.barcode,
-      variations: transformVariations(item.additionalid, oldCategoryId),
-      price: 0,
-      thumbnails: item.additionalid.images.map((image: string) => `https://storage.googleapis.com/ta-na-mao-f41a6.appspot.com/100x100/${image}`),
-      modifiers: [],
-      isSelected: false
-    }))
-  };
+  let response: IProductComplement[] = [
+    {
+      pdvId: 'add-' + companyId,
+      name: `Adicionais`,
+      qtdSelection: normalAdditionals.length,
+      isRequired: false,
+      groupId: 'add-' + companyId,
+      items: normalAdditionals.map((item: any, index) => ({
+        pdvId: item._id,
+        product: item.additionalid.product,
+        description: item.additionalid.description,
+        barCode: item.additionalid.barcode,
+        variations: transformVariations(item.additionalid, oldCategoryId),
+        price: 0,
+        thumbnails: item.additionalid.images.map((image: string) => `https://storage.googleapis.com/ta-na-mao-f41a6.appspot.com/100x100/${image}`),
+        modifiers: [],
+        isSelected: false
+      }))
+    }
+  ];
+
+  if (borders.length > 0) {
+    response.push({
+      pdvId: 'borders-' + companyId,
+      name: `Bordas`,
+      qtdSelection: 1,
+      isRequired: false,
+      groupId: 'borders-' + companyId,
+      items: borders.map((item: any) => ({
+        pdvId: item._id,
+        product: item.additionalid.product,
+        description: item.additionalid.description,
+        barCode: item.additionalid.barcode,
+        variations: transformVariations(item.additionalid, oldCategoryId),
+        price: 0,
+        thumbnails: item.additionalid.images.map((image: string) => `https://storage.googleapis.com/ta-na-mao-f41a6.appspot.com/100x100/${image}`),
+        modifiers: [],
+        isSelected: false
+      }))
+    });
+  }
+
+  return response;
 }
 
 // Função para transformar dados do modelo antigo para o novo
@@ -559,7 +584,7 @@ function transformProduct(oldProduct: any, oldComponents: any[], oldAdditionals:
   let transformedComplements: IProductComplement[] = [];
   
   transformedComplements.push(...transformComponentComplementItem(oldComponents, oldProduct.categoryid._id));
-  transformedComplements.push(transformProductAdditionalItem(oldAdditionals, oldProduct.companyid, oldProduct.categoryid._id));
+  transformedComplements.push(...transformProductAdditionalItem(oldAdditionals, oldProduct.companyid, oldProduct.categoryid._id));
 
   transformedProduct.complements = transformedComplements;
   return {
