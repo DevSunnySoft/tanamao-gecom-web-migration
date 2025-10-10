@@ -433,17 +433,17 @@ const transformProductType = (oldProduct: any): ProductType => {
   }
 }
 
-function transformVariations(oldProduct: any): IProductVariation {
+function transformVariations(oldProduct: any, forcedVarItemId?: string): IProductVariation {
   if (oldProduct.categoryid.qtdselection > 1) {
     return {
-      pdvId: 'var-' + oldProduct.categoryid._id,
+      pdvId: `var-${forcedVarItemId || oldProduct.categoryid._id}`,
       name: oldProduct.categoryid.name,
       options: [
         {
           name: oldProduct.categoryid.name,
           price: oldProduct.prices.cashpayment,
           pdvId: 'opt-' + oldProduct.categoryid._id + '-' + oldProduct._id,
-          variationItemPdvId: 'varitem-' + oldProduct.categoryid._id,
+          variationItemPdvId: `varitem-${forcedVarItemId || oldProduct.categoryid._id}`,
           qtdSelection: oldProduct.categoryid.qtdselection,
           qtdSelectionChargeHigher: oldProduct.categoryid.qtdselchargehigher,
         }
@@ -452,14 +452,14 @@ function transformVariations(oldProduct: any): IProductVariation {
   }
 
   return {
-    pdvId: 'var-' + oldProduct.companyid,
+    pdvId: `var-${forcedVarItemId || oldProduct.companyid}`,
     name: 'Padrão',
     options: [
       {
         name: 'Tamanho Único',
         price: oldProduct.prices.cashpayment,
-        pdvId: 'opt-' + oldProduct.companyid + '-' + oldProduct._id,
-        variationItemPdvId: 'varitem-' + oldProduct.companyid,
+        pdvId: `opt-${oldProduct.companyid}-${oldProduct._id}`,
+        variationItemPdvId: `varitem-${forcedVarItemId || oldProduct.companyid}`,
         qtdSelection: 1,
         qtdSelectionChargeHigher: 1,
       }
@@ -467,7 +467,7 @@ function transformVariations(oldProduct: any): IProductVariation {
   }
 }
 
-function transformComponentComplementItem(oldComponents: any[]): IProductComplement[] {
+function transformComponentComplementItem(oldComponents: any[], oldCategoryId: string): IProductComplement[] {
   const selectableComponents = oldComponents.filter(c => c.action === 'C');
   return selectableComponents.map(component => ({
     pdvId: component._id,
@@ -480,7 +480,7 @@ function transformComponentComplementItem(oldComponents: any[]): IProductComplem
       product: item.componentid.product,
       description: item.componentid.description,
       barCode: item.componentid.barcode,
-      variations: transformVariations(item.componentid),
+      variations: transformVariations(item.componentid, oldCategoryId),
       price: 0,
       thumbnails: item.componentid.images.map((image: string) => `https://storage.googleapis.com/ta-na-mao-f41a6.appspot.com/100x100/${image}`),
       modifiers: [],
@@ -489,7 +489,7 @@ function transformComponentComplementItem(oldComponents: any[]): IProductComplem
   }));
 }
 
-function transformProductAdditionalItem(oldAdditionals: any[], companyId: string): IProductComplement {
+function transformProductAdditionalItem(oldAdditionals: any[], companyId: string, oldCategoryId: string): IProductComplement {
   const normalAdditionals = oldAdditionals.filter(a => a.additionaltype === 'N' || a.additionaltype === 'Q');
   const borders = oldAdditionals.filter(a => a.additionaltype === 'B');
 
@@ -504,7 +504,7 @@ function transformProductAdditionalItem(oldAdditionals: any[], companyId: string
       product: item.additionalid.product,
       description: item.additionalid.description,
       barCode: item.additionalid.barcode,
-      variations: transformVariations(item.additionalid),
+      variations: transformVariations(item.additionalid, oldCategoryId),
       price: 0,
       thumbnails: item.additionalid.images.map((image: string) => `https://storage.googleapis.com/ta-na-mao-f41a6.appspot.com/100x100/${image}`),
       modifiers: [],
@@ -558,8 +558,8 @@ function transformProduct(oldProduct: any, oldComponents: any[], oldAdditionals:
 
   let transformedComplements: IProductComplement[] = [];
   
-  transformedComplements.push(...transformComponentComplementItem(oldComponents));
-  transformedComplements.push(transformProductAdditionalItem(oldAdditionals, oldProduct.companyid));
+  transformedComplements.push(...transformComponentComplementItem(oldComponents, oldProduct.categoryid._id));
+  transformedComplements.push(transformProductAdditionalItem(oldAdditionals, oldProduct.companyid, oldProduct.categoryid._id));
 
   transformedProduct.complements = transformedComplements;
   return {
@@ -655,6 +655,11 @@ export async function migrateProduct(oldConnection: mongoose.Connection, newConn
       populate: { path: 'parentcategory', model: OldCategoryModel }
     })
     .lean();
+
+    // Exclui produtos e atalhos existentes no banco novo para evitar duplicatas
+    await NewProductModel.deleteMany({ companyId: companyId });
+    await CatalogShortcutModel.deleteMany({ companyId: companyId });
+    console.log('🗑️ Produtos e atalhos existentes no banco novo excluídos para evitar duplicatas.');
 
     if (oldData.length === 0) {
       console.log('⚠️ Nenhum produto encontrado para a empresa com URI:', companyUri);
