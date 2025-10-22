@@ -1,3 +1,5 @@
+import { Types } from "mongoose"
+
 export type ICity = {
   _id: string
   cityid: number
@@ -11,7 +13,7 @@ export type ICity = {
 export type TMethod = 'self' | 'facebook' | 'gmail';
 
 export interface OldUser {
-  _id: string
+  _id: Types.ObjectId
   companyid?: string
   customerid?: string
   sunnyid?: number

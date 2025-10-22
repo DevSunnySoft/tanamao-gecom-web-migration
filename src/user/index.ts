@@ -1,9 +1,9 @@
 import type { OldUser, ICity, TMethod } from './types/OldUser';
 import type { IUser } from './types/NewUser';
-import mongoose from 'mongoose';
+import mongoose, { Types } from 'mongoose';
 
 // Schemas para o banco antigo
-const oldUserSchema = new mongoose.Schema({
+export const oldUserSchema = new mongoose.Schema({
   _id: String,
   companyid: String,
   customerid: String,
@@ -59,7 +59,7 @@ const oldUserSchema = new mongoose.Schema({
 }, { collection: 'users' });
 
 // Schema para o banco novo
-const newUserSchema = new mongoose.Schema({
+export const newUserSchema = new mongoose.Schema({
   companyId: String,
   pdvId: String,
   name: String,
@@ -128,7 +128,7 @@ const newUserSchema = new mongoose.Schema({
 
 
 // Função para transformar dados do modelo antigo para o novo
-function transformUser(oldUser: any): Partial<IUser> {
+export function transformUser(oldUser: OldUser): Partial<IUser> {
   const newUser: Partial<IUser> = {
     companyId: oldUser.companyid,
     pdvId: oldUser.customerid,
@@ -166,7 +166,7 @@ function transformUser(oldUser: any): Partial<IUser> {
     allowLocationTracking: false,
     dataRetentionPeriod: 365,
     consentGivenAt: oldUser.createdat || new Date(),
-    consentUpdatedAt: oldUser.createdAt || new Date()
+    consentUpdatedAt: oldUser.updatedat || oldUser.createdat || new Date()
   };
 
   newUser.lgpdConsent = {
@@ -188,11 +188,11 @@ export async function migrateUsers(oldConnection: mongoose.Connection, newConnec
     // Conectar ao banco antigo
     console.log('📡 Conectando ao banco de dados antigo...');
     
-    const OldUserModel = oldConnection.model('User', oldUserSchema);
+    const OldUserModel = oldConnection.model<OldUser>('User', oldUserSchema);
 
     // Conectar ao banco novo
     console.log('📡 Conectando ao banco de dados novo...');
-    const NewUserModel = newConnection.model('User', newUserSchema);
+    const NewUserModel = newConnection.model<IUser>('User', newUserSchema);
 
     // Buscar todos os usuários do banco antigo
     console.log('📋 Buscando usuários do banco antigo...');

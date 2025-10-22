@@ -1,5 +1,8 @@
 import type { OldCompany } from './types/OldCompany';
 import { DeliveryAreaGeometry, DeliveryAreaType, type DeliveryConfig, type ICompany, type IDeliveryArea } from './types/NewCompany';
+import { transformUser, oldUserSchema, newUserSchema } from '../user';
+import type { OldUser } from '../user/types/OldUser';
+import type { IUser } from '../user/types/NewUser';
 import mongoose from 'mongoose';
 
 // Interface para resposta da API Nominatim
@@ -195,6 +198,36 @@ export const DeliveryAreaSchema = new mongoose.Schema<IDeliveryArea>({
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });
+
+const legacyPaymethodSchema = new mongoose.Schema({
+  _id: String,
+  code: { type: String, required: true }
+}, { collection: 'paymethods' });
+
+const modernPaymethodSchema = new mongoose.Schema({
+  code: { type: String, required: true }
+}, { collection: 'paymethods' });
+
+interface PaymethodMappings {
+  oldIdToCode: Map<string, string>;
+  codeToNewId: Map<string, string>;
+}
+
+const STREET_TERMS_REGEX = /\b(?:Rua\s|R\.\s?|Avenida\s|Av\.\s|Av\s|R\s?)\b/gi;
+
+function sanitizeAddressForGeocoding(address?: string): string {
+  if (!address) {
+    return '';
+  }
+
+  const cleaned = address
+    .replace(STREET_TERMS_REGEX, '')
+    .replace(/\s+/g, ' ')
+    .replace(/\s*,\s*/g, ', ')
+    .trim();
+
+  return cleaned.length > 0 ? cleaned : address.trim();
+}
 
 const lilCache = new Map<string, NominatimResponse>();
 
@@ -414,21 +447,114 @@ function createDeliveryAreaFromGeoData(
     updatedAt: new Date()
   };
 }
+async function ensureDefaultCompanyUser(
+  oldConnection: mongoose.Connection,
+  newConnection: mongoose.Connection,
+  oldCompany: OldCompany,
+  targetCompanyId: mongoose.Types.ObjectId | string
+): Promise<boolean> {
+  const username = oldCompany.cnpj?.trim();
+
+  if (!username) {
+    console.warn(`⚠️ Empresa ${oldCompany.name} não possui CNPJ para validar usuário padrão`);
+    return false;
+  }
+
+  const NewUserModel = newConnection.models.User
+    || newConnection.model('User', newUserSchema);
+
+  const existingUser = await NewUserModel.findOne({ username }).lean();
+
+  if (existingUser) {
+    console.log(`👤 Usuário padrão já existe para ${oldCompany.name} (${username})`);
+    return false;
+  }
+
+  const OldUserModel = oldConnection.models.LegacyUser
+    || oldConnection.model('LegacyUser', oldUserSchema, 'users');
+
+  const legacyUser = await OldUserModel.findOne({ username }).lean<OldUser>();
+
+  if (!legacyUser) {
+    console.warn(`⚠️ Usuário padrão não encontrado no legado para ${oldCompany.name} (${username})`);
+    return false;
+  }
+
+  const transformedUser = transformUser(legacyUser);
+  const newUserPayload: Partial<IUser> & { _id: string } = {
+    ...transformedUser,
+    _id: legacyUser._id.toHexString(),
+    companyId: targetCompanyId.toString(),
+    username,
+  };
+
+  const newUserDocument = new NewUserModel(newUserPayload);
+  await newUserDocument.save();
+
+  console.log(`✅ Usuário padrão criado para ${oldCompany.name} (${username})`);
+  return true;
+}
+async function loadPaymethodMappings(
+  oldConnection: mongoose.Connection,
+  newConnection: mongoose.Connection
+): Promise<PaymethodMappings> {
+  const LegacyPaymethodModel = oldConnection.models.LegacyPaymethod
+    || oldConnection.model('LegacyPaymethod', legacyPaymethodSchema, 'paymethods');
+
+  const ModernPaymethodModel = newConnection.models.ModernPaymethod
+    || newConnection.model('ModernPaymethod', modernPaymethodSchema, 'paymethods');
+
+  const [legacyPaymethods, modernPaymethods] = await Promise.all([
+    LegacyPaymethodModel.find({}).select({ _id: 1, code: 1 }).lean(),
+    ModernPaymethodModel.find({}).select({ _id: 1, code: 1 }).lean()
+  ]);
+
+  const oldIdToCode = new Map<string, string>();
+  const codeToNewId = new Map<string, string>();
+
+  for (const legacy of legacyPaymethods as Array<{ _id: string; code?: string }>) {
+    if (!legacy?._id || !legacy.code) {
+      continue;
+    }
+
+    oldIdToCode.set(String(legacy._id), String(legacy.code).trim().toUpperCase());
+  }
+
+  for (const modern of modernPaymethods as Array<{ _id: mongoose.Types.ObjectId | string; code?: string }>) {
+    if (!modern?._id || !modern.code) {
+      continue;
+    }
+
+    codeToNewId.set(String(modern.code).trim().toUpperCase(), modern._id.toString());
+  }
+
+  return { oldIdToCode, codeToNewId };
+}
+
 // Função para transformar dados do modelo antigo para o novo
-async function transformCompany(oldCompany: any, companyObjectId?: mongoose.Types.ObjectId): Promise<{ company: Partial<ICompany>, deliveryAreas: Partial<IDeliveryArea>[] }> {
+async function transformCompany(
+  oldCompany: any,
+  paymethodMappings: PaymethodMappings,
+  companyObjectId?: mongoose.Types.ObjectId
+): Promise<{ company: Partial<ICompany>, deliveryAreas: Partial<IDeliveryArea>[] }> {
   let locationCenter: any;
   
   if (oldCompany.location?.address && oldCompany.cities && Array.isArray(oldCompany.cities) && oldCompany.cities.length > 0) {
     // Tentar geocodificar o endereço com a cidade principal, se não funcionar, tentar só o endereço
     const primaryCity = oldCompany.cities[0];
-    const fullAddress = `${oldCompany.location.address}, ${primaryCity.name}, ${primaryCity.uf}`;
+    const sanitizedAddress = sanitizeAddressForGeocoding(oldCompany.location.address);
+    const baseAddress = sanitizedAddress || oldCompany.location.address || '';
+    const fullAddress = baseAddress
+      ? `${baseAddress}, ${primaryCity.name}, ${primaryCity.uf}`
+      : `${primaryCity.name}, ${primaryCity.uf}`;
     try {
       let locationGeo = await fetchAddressGeocode(fullAddress);
 
       if (!locationGeo || !locationGeo.lat || !locationGeo.lon) {
         // Tentar só com o endereço
-        console.log(`🔄 Tentando geocodificar apenas o endereço: ${oldCompany.location.address}`)
-        locationGeo = await fetchAddressGeocode(oldCompany.location.address)
+        const fallbackAddress = sanitizedAddress || oldCompany.location.address;
+        console.log(`🔄 Tentando geocodificar apenas o endereço: ${fallbackAddress}`)
+        locationGeo = await fetchAddressGeocode(fallbackAddress)
       }
 
       if (locationGeo && locationGeo.lat && locationGeo.lon) {
@@ -501,7 +627,34 @@ async function transformCompany(oldCompany: any, companyObjectId?: mongoose.Type
 
   // Transformar Paymethods
   if (oldCompany.paymethods && Array.isArray(oldCompany.paymethods)) {
-    newCompany.payMethods = oldCompany.paymethods.map((pm: string) => new mongoose.Types.ObjectId(pm));
+    const resolvedPaymethods = new Set<string>();
+
+    for (const legacyReference of oldCompany.paymethods) {
+      if (!legacyReference) {
+        continue;
+      }
+
+      const legacyCodeCandidate = paymethodMappings.oldIdToCode.get(String(legacyReference)) ?? String(legacyReference);
+      const normalizedCode = legacyCodeCandidate.trim().toUpperCase();
+
+      if (!normalizedCode) {
+        continue;
+      }
+
+      const newPaymethodId = paymethodMappings.codeToNewId.get(normalizedCode);
+
+      if (newPaymethodId) {
+        if (mongoose.Types.ObjectId.isValid(newPaymethodId)) {
+          resolvedPaymethods.add(newPaymethodId);
+        } else {
+          console.warn(`⚠️ ID de método de pagamento inválido encontrado para o código ${normalizedCode}: ${newPaymethodId}`);
+        }
+      } else {
+        console.warn(`⚠️ Não foi possível mapear o método de pagamento ${normalizedCode} para a empresa ${oldCompany.name}`);
+      }
+    }
+
+    newCompany.payMethods = Array.from(resolvedPaymethods).map((id) => new mongoose.Types.ObjectId(id));
   }
 
   // Transformar categorias de negócio se existirem
@@ -616,12 +769,13 @@ export async function migrateCompanies(oldConnection: mongoose.Connection, newCo
     // Conectar ao banco antigo
     console.log('📡 Conectando ao banco de dados antigo...');
     
-    const OldCompanyModel = oldConnection.model('Company', oldCompanySchema);
+    const OldCompanyModel = oldConnection.model<OldCompany>('Company', oldCompanySchema);
 
     // Conectar ao banco novo
     console.log('📡 Conectando ao banco de dados novo...');
-    const NewCompanyModel = newConnection.model('Company', newCompanySchema);
+    const NewCompanyModel = newConnection.model<ICompany>('Company', newCompanySchema);
     const DeliveryAreaModel = newConnection.model('DeliveryArea', DeliveryAreaSchema);
+    const paymethodMappings = await loadPaymethodMappings(oldConnection, newConnection);
 
     // Buscar todas as empresas do banco antigo
     console.log('📋 Buscando empresas do banco antigo...');
@@ -634,8 +788,10 @@ export async function migrateCompanies(oldConnection: mongoose.Connection, newCo
     console.log(`📊 Encontradas ${oldCompanies.length} empresas para migrar`);
 
     let migratedCount = 0;
+    let updatedCount = 0;
     let errorCount = 0;
     let deliveryAreasCount = 0;
+    let defaultUsersCreated = 0;
     const batchSize = 10; // Batch size menor devido às requisições da API externa
 
     // Processar em lotes
@@ -656,20 +812,64 @@ export async function migrateCompanies(oldConnection: mongoose.Connection, newCo
           });
           
           if (existingCompany) {
-            console.log(`⚠️ Empresa ${oldCompany.name} (${oldCompany.cnpj}) já existe no banco novo. Pulando...`);
+            console.log(`♻️ Empresa ${oldCompany.name} (${oldCompany.cnpj}) já existe. Atualizando registros...`);
+
+            const { company: transformedCompany, deliveryAreas } = await transformCompany(oldCompany, paymethodMappings, existingCompany._id);
+            const { _id: ignoredId, ...companyUpdateData } = transformedCompany;
+
+            await NewCompanyModel.updateOne({ _id: existingCompany._id }, { $set: companyUpdateData });
+            console.log(`✅ Empresa ${oldCompany.name} atualizada com sucesso`);
+
+            const createdDefaultUser = await ensureDefaultCompanyUser(
+              oldConnection,
+              newConnection,
+              oldCompany,
+              existingCompany._id
+            );
+
+            if (createdDefaultUser) {
+              defaultUsersCreated++;
+            }
+
+            if (deliveryAreas && deliveryAreas.length > 0) {
+              console.log(`📍 Atualizando ${deliveryAreas.length} áreas de entrega para ${oldCompany.name}`);
+              await DeliveryAreaModel.deleteMany({ companyId: existingCompany._id });
+
+              const areasToSave = deliveryAreas.map(area => ({
+                ...area,
+                companyId: existingCompany._id
+              }));
+
+              const savedAreas = await DeliveryAreaModel.insertMany(areasToSave);
+              deliveryAreasCount += savedAreas.length;
+              console.log(`✅ ${savedAreas.length} áreas de entrega atualizadas para ${oldCompany.name}`);
+            }
+
+            updatedCount++;
             continue;
           }
 
           console.log(`🔄 Transformando empresa: ${oldCompany.name}`);
           
           // Transformar empresa e criar delivery areas
-          const { company: transformedCompany, deliveryAreas } = await transformCompany(oldCompany);
+          const { company: transformedCompany, deliveryAreas } = await transformCompany(oldCompany, paymethodMappings);
           
           // Salvar a empresa primeiro
           const newCompany = new NewCompanyModel(transformedCompany);
           const savedCompany = await newCompany.save();
           
           console.log(`✅ Empresa ${oldCompany.name} salva com ID: ${savedCompany._id}`);
+
+          const createdDefaultUser = await ensureDefaultCompanyUser(
+            oldConnection,
+            newConnection,
+            oldCompany,
+            savedCompany._id
+          );
+
+          if (createdDefaultUser) {
+            defaultUsersCreated++;
+          }
           
           // Atualizar companyId nas delivery areas e salvar
           if (deliveryAreas && deliveryAreas.length > 0) {
@@ -714,7 +914,9 @@ export async function migrateCompanies(oldConnection: mongoose.Connection, newCo
 
     console.log('\n📊 Resumo da migração:');
     console.log(`✅ Empresas migradas com sucesso: ${migratedCount}`);
+    console.log(`♻️ Empresas atualizadas: ${updatedCount}`);
     console.log(`📍 Áreas de entrega criadas: ${deliveryAreasCount}`);
+    console.log(`👤 Usuários padrão criados: ${defaultUsersCreated}`);
     console.log(`❌ Erros durante a migração: ${errorCount}`);
     console.log(`📝 Total de empresas processadas: ${oldCompanies.length}`);
 
@@ -722,7 +924,9 @@ export async function migrateCompanies(oldConnection: mongoose.Connection, newCo
     
     return {
       migratedCount,
+      updatedCount,
       deliveryAreasCount,
+      defaultUsersCreated,
       errorCount,
       totalProcessed: oldCompanies.length
     };
